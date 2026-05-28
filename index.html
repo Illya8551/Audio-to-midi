@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIDI Piano from Mic - Full Version</title>
+<style>
+  body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; }
+  select, button { padding: 10px; margin: 5px; font-size: 16px; }
+  #note { font-size: 48px; font-weight: bold; color: #00ffcc; }
+  .container { background: #16213e; padding: 20px; border-radius: 10px; margin: 10px 0; }
+  .error { color: #ff6b6b; }
+</style>
+</head>
+<body>
+<h1>🎹 Преврати пианино в MIDI-клавиатуру</h1>
+
+<div class="container">
+  <h3>1. Выбери микрофон:</h3>
+  <select id="micSelect"></select>
+  <button id="startBtn">🎤 Запустить</button>
+  <button id="stopBtn" disabled>⏹️ Стоп</button>
+</div>
+
+<div class="container">
+  <h3>2. Распознанная нота:</h3>
+  <div id="note">—</div>
+  <div>Частота: <span id="freq">0</span> Гц</div>
+  <div>Чистота сигнала: <span id="clarity">0</span>%</div>
+</div>
+
+<div class="container">
+  <h3>3. MIDI вывод:</h3>
+  <div>🎵 Ноты отправляются на встроенный синтезатор</div>
+  <div id="midiLog">Готов к работе...</div>
+</div>
+
+<script>
+// ========== ПОЛНАЯ ВЕРСИЯ ==========
+// Используем библиотеку Pitchy для распознавания нот
+// (работает без интернета после загрузки)
+
+const script = document.createElement('script');
+script.src = 'https://cdn.jsdelivr.net/npm/pitchy@4.1.0/build/index.min.js';
+script.onload = () => init();
+document.head.appendChild(script);
+
+let audioContext, source, stream, analyser, detector;
+let isRunning = false;
+let currentNote = null;
+let animationId = null;
+
+// MIDI синтезатор (встроенный в браузер)
+let midiOutput = null;
+let synth = null;
+
+function init() {
+  if (!window.Pitchy) {
+    document.getElementById('midiLog').innerHTML = '❌ Ошибка загрузки Pitchy';
+    return;
+  }
+  
+  // Создаём встроенный синтезатор для вывода звука
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  synth = {
+    playNote: (midiNote, velocity) => {
+      const now = audioContext.currentTime;
+      const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
+      
+      const osc = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.value = velocity / 127;
+      
+      osc.connect(gain);
+      gain.connect(audioContext.destination);
+      
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.00001, now + 0.5);
+      osc.stop(now + 0.5);
+    }
+  };
+  
+  loadMicrophones();
+}
+
+async function loadMicrophones() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const micSelect = document.getElementById('micSelect');
+    
+    devices.forEach(device => {
+      if (device.kind === 'audioinput') {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.text = device.label || `Микрофон ${micSelect.length + 1}`;
+        micSelect.appendChild(option);
+      }
+    });
+  } catch(e) {
+    console.error('Ошибка загрузки микрофонов:', e);
+  }
+}
+
+document.getElementById('startBtn').onclick = async () => {
+  if (isRunning) return;
+  
+  const micId = document.getElementById('micSelect').value;
+  
+  try {
+    // Запрашиваем микрофон с шумоподавлением
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: micId ? { exact: micId } : undefined,
+        noiseSuppression: true,    // Убираем шум
+        echoCancellation: true,
+        autoGainControl: true
+      }
+    });
+    
+    await audioContext.resume();
+    
+    source = audioContext.createMediaStreamSource(stream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    
+    source.connect(analyser);
+    
+    // Создаём детектор нот
+    const bufferSize = 2048;
+    detector = window.Pitchy.PitchDetector.forFloat32Array(bufferSize);
+    
+    isRunning = true;
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+    document.getElementById('midiLog').innerHTML = '🎧 Слушаю микрофон...';
+    
+    startDetection();
+    
+  } catch(err) {
+    document.getElementById('midiLog').innerHTML = `❌ Ошибка: ${err.message}`;
+  }
+};
+
+document.getElementById('stopBtn').onclick = () => {
+  if (animationId) cancelAnimationFrame(animationId);
+  if (stream) stream.getTracks().forEach(track => track.stop());
+  isRunning = false;
+  
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+  document.getElementById('note').innerHTML = '—';
+  document.getElementById('midiLog').innerHTML = '⏹️ Остановлено';
+};
+
+function startDetection() {
+  const buffer = new Float32Array(analyser.fftSize);
+  
+  function detect() {
+    if (!isRunning) return;
+    
+    analyser.getFloatTimeDomainData(buffer);
+    
+    // Алгоритм распознавания ноты
+    try {
+      const [pitch, clarity] = detector.findPitch(buffer, audioContext.sampleRate);
+      
+      if (pitch > 80 && pitch < 3000 && clarity > 0.85) { // Чистота >85%
+        const midiNote = Math.round(12 * Math.log2(pitch / 440) + 69);
+        const noteName = midiToNoteName(midiNote);
+        
+        document.getElementById('note').innerHTML = noteName;
+        document.getElementById('freq').innerHTML = Math.round(pitch);
+        document.getElementById('clarity').innerHTML = Math.round(clarity * 100);
+        
+        // Если нота изменилась - отправляем MIDI
+        if (currentNote !== midiNote) {
+          if (currentNote !== null) {
+            // Отпускаем предыдущую ноту
+            synth.playNote(currentNote, 0);
+          }
+          
+          // Играем новую ноту
+          synth.playNote(midiNote, 100);
+          currentNote = midiNote;
+          
+          document.getElementById('midiLog').innerHTML = `🎵 Нота отправлена: ${noteName} (MIDI ${midiNote})`;
+        }
+      } else if (currentNote !== null) {
+        // Сигнал прервался - отпускаем ноту
+        synth.playNote(currentNote, 0);
+        currentNote = null;
+        document.getElementById('clarity').innerHTML = '0';
+      }
+      
+    } catch(e) {
+      // Тишина или шум
+    }
+    
+    animationId = requestAnimationFrame(detect);
+  }
+  
+  detect();
+}
+
+function midiToNoteName(midi) {
+  const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const octave = Math.floor(midi / 12) - 1;
+  const note = notes[midi % 12];
+  return `${note}${octave}`;
+}
+
+// Автозапуск при загрузке
+window.addEventListener('load', () => {
+  document.getElementById('midiLog').innerHTML = '✅ Готов. Нажми "Запустить" и разреши доступ к микрофону.';
+});
+</script>
+</body>
+</html>
