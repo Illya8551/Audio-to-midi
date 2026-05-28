@@ -3,12 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MIDI Piano - No Libraries</title>
+<title>MIDI Piano - Working Sound</title>
 <style>
   body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; max-width: 800px; margin: 0 auto; }
   select, button { padding: 10px; margin: 5px; font-size: 16px; }
   #note { font-size: 48px; font-weight: bold; color: #00ffcc; }
   .container { background: #16213e; padding: 20px; border-radius: 10px; margin: 10px 0; }
+  .piano { display: flex; flex-wrap: wrap; margin-top: 20px; }
+  .piano-key { width: 50px; height: 150px; background: white; border: 1px solid black; margin: 2px; cursor: pointer; }
+  .black-key { background: black; width: 30px; height: 90px; margin-left: -15px; margin-right: -15px; z-index: 1; }
 </style>
 </head>
 <body>
@@ -25,6 +28,7 @@
   <h3>2. Распознанная нота:</h3>
   <div id="note">—</div>
   <div>Частота: <span id="freq">0</span> Гц</div>
+  <div>Громкость: <span id="volume">0</span>%</div>
 </div>
 
 <div class="container">
@@ -35,9 +39,11 @@
 let audioContext, source, stream, analyser;
 let isRunning = false;
 let currentNote = null;
+let currentOscillator = null;
+let currentGain = null;
 let animationId = null;
 
-// Простой детектор нот без внешних библиотек
+// Простой детектор нот
 class SimplePitchDetector {
   constructor(bufferSize, sampleRate) {
     this.bufferSize = bufferSize;
@@ -45,7 +51,6 @@ class SimplePitchDetector {
   }
   
   findPitch(buffer) {
-    // Автокорреляция
     let maxCorr = 0;
     let maxOffset = -1;
     
@@ -78,7 +83,6 @@ function log(msg) {
 // Загрузка микрофонов
 async function loadMicrophones() {
   try {
-    // Запрашиваем разрешение
     await navigator.mediaDevices.getUserMedia({ audio: true })
       .then(s => s.getTracks().forEach(t => t.stop()));
     
@@ -105,6 +109,50 @@ async function loadMicrophones() {
   }
 }
 
+// Функция для проигрывания ноты через динамик
+function playNote(midiNote, velocity) {
+  if (!audioContext) return;
+  
+  // Останавливаем текущую ноту
+  if (currentOscillator) {
+    try {
+      currentOscillator.stop();
+    } catch(e) {}
+  }
+  
+  const frequency = 440 * Math.pow(2, (midiNote - 69) / 12);
+  
+  // Создаём осциллятор (звук)
+  currentOscillator = audioContext.createOscillator();
+  currentGain = audioContext.createGain();
+  
+  currentOscillator.type = 'sine'; // Можно изменить на 'triangle', 'sawtooth'
+  currentOscillator.frequency.value = frequency;
+  
+  // Огибающая звука (атака, затухание)
+  const now = audioContext.currentTime;
+  currentGain.gain.setValueAtTime(0, now);
+  currentGain.gain.linearRampToValueAtTime(velocity / 127, now + 0.01);
+  currentGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.8);
+  
+  currentOscillator.connect(currentGain);
+  currentGain.connect(audioContext.destination);
+  
+  currentOscillator.start();
+  currentOscillator.stop(now + 0.8);
+}
+
+// Функция для остановки ноты
+function stopNote() {
+  if (currentOscillator) {
+    try {
+      currentOscillator.stop();
+    } catch(e) {}
+    currentOscillator = null;
+    currentGain = null;
+  }
+}
+
 // Запуск
 document.getElementById('startBtn').onclick = async () => {
   if (isRunning) return;
@@ -116,11 +164,17 @@ document.getElementById('startBtn').onclick = async () => {
   }
   
   try {
+    // Создаём аудиоконтекст
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     await audioContext.resume();
     
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: { exact: micId }, noiseSuppression: true }
+      audio: { 
+        deviceId: { exact: micId }, 
+        noiseSuppression: true,
+        echoCancellation: false,
+        autoGainControl: true
+      }
     });
     
     source = audioContext.createMediaStreamSource(stream);
@@ -128,14 +182,19 @@ document.getElementById('startBtn').onclick = async () => {
     analyser.fftSize = 2048;
     source.connect(analyser);
     
+    // Дополнительный анализатор для громкости
+    const volumeAnalyser = audioContext.createAnalyser();
+    volumeAnalyser.fftSize = 256;
+    source.connect(volumeAnalyser);
+    
     detector = new SimplePitchDetector(2048, audioContext.sampleRate);
     
     isRunning = true;
     document.getElementById('startBtn').disabled = true;
     document.getElementById('stopBtn').disabled = false;
-    log('🎧 Слушаю... Играйте на пианино');
+    log('🎧 Слушаю... Играйте на пианино или пойте в микрофон!');
     
-    startDetection();
+    startDetection(volumeAnalyser);
     
   } catch(err) {
     log(`❌ Ошибка: ${err.message}`);
@@ -146,6 +205,7 @@ document.getElementById('startBtn').onclick = async () => {
 document.getElementById('stopBtn').onclick = () => {
   if (animationId) cancelAnimationFrame(animationId);
   if (stream) stream.getTracks().forEach(t => t.stop());
+  stopNote();
   isRunning = false;
   currentNote = null;
   
@@ -153,33 +213,55 @@ document.getElementById('stopBtn').onclick = () => {
   document.getElementById('stopBtn').disabled = true;
   document.getElementById('note').innerHTML = '—';
   document.getElementById('freq').innerHTML = '0';
+  document.getElementById('volume').innerHTML = '0';
   log('⏹️ Остановлено');
 };
 
-// Распознавание
-function startDetection() {
+// Распознавание с громкостью
+function startDetection(volumeAnalyser) {
   const buffer = new Float32Array(analyser.fftSize);
+  const volumeBuffer = new Uint8Array(volumeAnalyser.frequencyBinCount);
   
   function detect() {
     if (!isRunning || !detector) return;
     
-    analyser.getFloatTimeDomainData(buffer);
-    const [pitch, clarity] = detector.findPitch(buffer);
+    // Измеряем громкость
+    volumeAnalyser.getByteFrequencyData(volumeBuffer);
+    let avgVolume = 0;
+    for (let i = 0; i < volumeBuffer.length; i++) {
+      avgVolume += volumeBuffer[i];
+    }
+    avgVolume = avgVolume / volumeBuffer.length;
+    const volumePercent = Math.round((avgVolume / 255) * 100);
+    document.getElementById('volume').innerHTML = volumePercent;
     
-    if (pitch > 100 && pitch < 2000 && clarity > 0.6) {
-      const midiNote = Math.round(12 * Math.log2(pitch / 440) + 69);
-      const noteName = midiToNoteName(midiNote);
+    // Распознаём ноту только если есть звук
+    if (volumePercent > 5) {
+      analyser.getFloatTimeDomainData(buffer);
+      const [pitch, clarity] = detector.findPitch(buffer);
       
-      document.getElementById('note').innerHTML = noteName;
-      document.getElementById('freq').innerHTML = Math.round(pitch);
-      
-      // Играем ноту через встроенный синтезатор
-      if (currentNote !== midiNote) {
-        playTone(pitch, 0.3);
-        currentNote = midiNote;
-        log(`🎵 Нота: ${noteName} (${Math.round(pitch)} Гц)`);
+      if (pitch > 100 && pitch < 2000 && clarity > 0.6) {
+        const midiNote = Math.round(12 * Math.log2(pitch / 440) + 69);
+        const noteName = midiToNoteName(midiNote);
+        
+        document.getElementById('note').innerHTML = noteName;
+        document.getElementById('freq').innerHTML = Math.round(pitch);
+        
+        // Если нота изменилась - играем новую
+        if (currentNote !== midiNote) {
+          if (currentNote !== null) {
+            stopNote();
+          }
+          playNote(midiNote, Math.min(127, volumePercent * 1.5));
+          currentNote = midiNote;
+          log(`🎵 Играем ноту: ${noteName} (${Math.round(pitch)} Гц) Громкость: ${volumePercent}%`);
+        }
+      } else if (currentNote !== null) {
+        stopNote();
+        currentNote = null;
       }
     } else if (currentNote !== null) {
+      stopNote();
       currentNote = null;
     }
     
@@ -187,20 +269,6 @@ function startDetection() {
   }
   
   detect();
-}
-
-// Проигрывание звука
-function playTone(frequency, duration) {
-  const osc = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  osc.type = 'sine';
-  osc.frequency.value = frequency;
-  gain.gain.value = 0.3;
-  osc.connect(gain);
-  gain.connect(audioContext.destination);
-  osc.start();
-  gain.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + duration);
-  osc.stop(audioContext.currentTime + duration);
 }
 
 function midiToNoteName(midi) {
