@@ -3,17 +3,18 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MIDI Piano - Полная фильтрация звука</title>
+<title>MIDI Piano - С отдельным регулятором громкости выхода</title>
 <style>
   body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; max-width: 800px; margin: 0 auto; }
   select, button, input { padding: 10px; margin: 5px; font-size: 16px; }
   #note { font-size: 48px; font-weight: bold; color: #00ffcc; }
   .container { background: #16213e; padding: 20px; border-radius: 10px; margin: 10px 0; }
   .filter-group { background: #0f3460; padding: 15px; border-radius: 8px; margin: 10px 0; }
-  .filter-group label { display: inline-block; width: 200px; margin: 5px 0; }
+  .filter-group label { display: inline-block; width: 220px; margin: 5px 0; }
   input[type="range"] { width: 200px; }
   .value-display { display: inline-block; margin-left: 10px; color: #00ffcc; }
   .note-off { background: #ff6b6b; padding: 5px 10px; border-radius: 5px; margin-top: 10px; }
+  .output-volume { background: #2a6b4e; padding: 5px 10px; border-radius: 5px; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -35,24 +36,22 @@
 </div>
 
 <div class="container">
-  <h3>🔧 Фильтры микрофона:</h3>
+  <h3>🔧 Фильтры микрофона (вход):</h3>
   
   <div class="filter-group">
-    <label>🎚️ Фильтр по громкости:</label>
+    <label>🎚️ Фильтр по громкости входа:</label>
     <input type="checkbox" id="volumeFilterToggle" checked> <span style="color:#00ffcc">Включен</span><br>
     <label>Минимальная громкость (%):</label>
     <input type="range" id="minVolume" min="0" max="30" step="1" value="8">
-    <span id="minVolumeVal" class="value-display">8%</span><br>
-    <small>Ниже этой громкости нота не распознаётся (убирает тихий шум)</small>
+    <span id="minVolumeVal" class="value-display">8%</span>
   </div>
   
   <div class="filter-group">
     <label>🎚️ Фильтр по чистоте сигнала:</label>
     <input type="checkbox" id="clarityFilterToggle" checked> <span style="color:#00ffcc">Включен</span><br>
-    <label>Минимальная чистота:</label>
+    <label>Минимальная чистота (%):</label>
     <input type="range" id="minClarity" min="0" max="95" step="5" value="65">
-    <span id="minClarityVal" class="value-display">65%</span><br>
-    <small>Чистый тон = высокая чистота. Фильтрует шум и обертоны</small>
+    <span id="minClarityVal" class="value-display">65%</span>
   </div>
   
   <div class="filter-group">
@@ -63,15 +62,26 @@
     <span id="minMidiNoteVal" class="value-display">48 (C3)</span><br>
     <label>Максимальная нота (MIDI):</label>
     <input type="range" id="maxMidiNote" min="48" max="96" step="1" value="84">
-    <span id="maxMidiNoteVal" class="value-display">84 (C6)</span><br>
-    <small>Диапазон распознаваемых нот (игнорирует слишком низкие/высокие)</small>
+    <span id="maxMidiNoteVal" class="value-display">84 (C6)</span>
   </div>
   
   <div class="note-off">
     <label>⏱️ Задержка отпускания ноты (мс):</label>
     <input type="range" id="noteOffDelay" min="0" max="1000" step="50" value="300">
-    <span id="noteOffDelayVal" class="value-display">300 мс</span><br>
-    <small>После прекращения звука нота держится указанное время</small>
+    <span id="noteOffDelayVal" class="value-display">300 мс</span>
+  </div>
+
+  <div class="output-volume">
+    <label>🔊 ГРОМКОСТЬ ВЫХОДА (MIDI Velocity):</label>
+    <input type="checkbox" id="useInputVolumeToggle" checked> 
+    <span style="color:#00ffcc">Зависеть от громкости входа</span><br>
+    
+    <div id="manualVolumeControl" style="margin-top: 10px;">
+      <label>Ручная громкость выхода (1-127):</label>
+      <input type="range" id="manualMidiVelocity" min="1" max="127" step="1" value="80">
+      <span id="manualMidiVelocityVal" class="value-display">80</span>
+      <small style="display: block; color: #aaa;">Используется, если отключена галочка выше</small>
+    </div>
   </div>
 </div>
 
@@ -127,8 +137,10 @@ const minClaritySlider = document.getElementById('minClarity');
 const minMidiNoteSlider = document.getElementById('minMidiNote');
 const maxMidiNoteSlider = document.getElementById('maxMidiNote');
 const noteOffDelaySlider = document.getElementById('noteOffDelay');
+const manualMidiVelocity = document.getElementById('manualMidiVelocity');
+const useInputVolumeToggle = document.getElementById('useInputVolumeToggle');
 
-// Обновление отображения значений
+// Обновление отображения
 minVolumeSlider.oninput = () => document.getElementById('minVolumeVal').innerText = minVolumeSlider.value + '%';
 minClaritySlider.oninput = () => document.getElementById('minClarityVal').innerText = minClaritySlider.value + '%';
 minMidiNoteSlider.oninput = () => {
@@ -148,6 +160,7 @@ maxMidiNoteSlider.oninput = () => {
   }
 };
 noteOffDelaySlider.oninput = () => document.getElementById('noteOffDelayVal').innerText = noteOffDelaySlider.value + ' мс';
+manualMidiVelocity.oninput = () => document.getElementById('manualMidiVelocityVal').innerText = manualMidiVelocity.value;
 
 function log(msg) {
   document.getElementById('status').innerHTML = msg;
@@ -178,7 +191,7 @@ async function loadMicrophones() {
   }
 }
 
-// Проигрывание ноты
+// Проигрывание ноты с УКАЗАННОЙ громкостью (velocity 1-127)
 function playNote(midiNote, velocity) {
   if (!audioContext) return;
   
@@ -193,9 +206,13 @@ function playNote(midiNote, velocity) {
   currentOscillator.type = 'sine';
   currentOscillator.frequency.value = frequency;
   
+  // Ограничиваем velocity от 0 до 127
+  const normVelocity = Math.min(127, Math.max(0, velocity));
+  const gainValue = normVelocity / 127;
+  
   const now = audioContext.currentTime;
   currentGain.gain.setValueAtTime(0, now);
-  currentGain.gain.linearRampToValueAtTime(velocity / 127, now + 0.01);
+  currentGain.gain.linearRampToValueAtTime(gainValue, now + 0.01);
   currentGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.8);
   
   currentOscillator.connect(currentGain);
@@ -247,7 +264,7 @@ document.getElementById('startBtn').onclick = async () => {
     isRunning = true;
     document.getElementById('startBtn').disabled = true;
     document.getElementById('stopBtn').disabled = false;
-    log('🎧 Слушаю... Фильтры активны');
+    log('🎧 Слушаю... Фильтры активны. Настройте громкость выхода ниже');
     
     startDetection();
     
@@ -274,7 +291,7 @@ document.getElementById('stopBtn').onclick = () => {
   log('⏹️ Остановлено');
 };
 
-// Распознавание с фильтрами
+// Распознавание с выбором громкости выхода
 function startDetection() {
   const buffer = new Float32Array(analyser.fftSize);
   const volumeBuffer = new Uint8Array(volumeAnalyser.frequencyBinCount);
@@ -282,13 +299,13 @@ function startDetection() {
   function detect() {
     if (!isRunning || !detector) return;
     
-    // Измеряем громкость
+    // Измеряем входную громкость
     volumeAnalyser.getByteFrequencyData(volumeBuffer);
     let avgVolume = 0;
     for (let i = 0; i < volumeBuffer.length; i++) avgVolume += volumeBuffer[i];
     avgVolume = avgVolume / volumeBuffer.length;
-    const volumePercent = Math.round((avgVolume / 255) * 100);
-    document.getElementById('volume').innerHTML = volumePercent;
+    const inputVolumePercent = Math.round((avgVolume / 255) * 100);
+    document.getElementById('volume').innerHTML = inputVolumePercent;
     
     // Получаем настройки фильтров
     const volumeFilterOn = document.getElementById('volumeFilterToggle').checked;
@@ -300,10 +317,22 @@ function startDetection() {
     const maxMidiNote = parseInt(maxMidiNoteSlider.value);
     const noteOffDelay = parseInt(noteOffDelaySlider.value);
     
+    // ⭐ НОВОЕ: определяем громкость ВЫХОДА
+    const useInputVolume = useInputVolumeToggle.checked;
+    let outputVelocity;
+    
+    if (useInputVolume) {
+      // Громкость выхода зависит от громкости входа (как было)
+      outputVelocity = Math.min(127, Math.max(1, inputVolumePercent * 1.5));
+    } else {
+      // ИСПОЛЬЗУЕМ РУЧНУЮ ГРОМКОСТЬ (то что вы просили)
+      outputVelocity = parseInt(manualMidiVelocity.value);
+    }
+    
     let shouldDetect = true;
     
-    // Фильтр по громкости
-    if (volumeFilterOn && volumePercent < minVolume) shouldDetect = false;
+    // Фильтр по громкости входа
+    if (volumeFilterOn && inputVolumePercent < minVolume) shouldDetect = false;
     
     let pitch = 0, clarity = 0;
     
@@ -311,13 +340,10 @@ function startDetection() {
       analyser.getFloatTimeDomainData(buffer);
       [pitch, clarity] = detector.findPitch(buffer);
       
-      // Фильтр по чистоте
       if (clarityFilterOn && clarity < minClarity) shouldDetect = false;
       
-      // Конвертируем частоту в MIDI ноту
       const midiNote = Math.round(12 * Math.log2(pitch / 440) + 69);
       
-      // Фильтр по диапазону нот
       if (freqFilterOn && (midiNote < minMidiNote || midiNote > maxMidiNote)) shouldDetect = false;
       
       document.getElementById('clarity').innerHTML = Math.round(clarity * 100);
@@ -327,28 +353,27 @@ function startDetection() {
         const noteName = midiToNoteName(midiNote);
         document.getElementById('note').innerHTML = noteName;
         
-        // Новая нота
         if (currentNote !== midiNote) {
           if (noteOffTimeout) clearTimeout(noteOffTimeout);
           if (currentNote !== null) stopNote();
-          playNote(midiNote, Math.min(127, volumePercent * 1.5));
+          
+          // ⭐ ИСПОЛЬЗУЕМ ВЫЧИСЛЕННУЮ ВЫХОДНУЮ ГРОМКОСТЬ
+          playNote(midiNote, outputVelocity);
+          
           currentNote = midiNote;
-          log(`🎵 Нота: ${noteName} (${Math.round(pitch)} Гц) | Громк:${volumePercent}% Чист:${Math.round(clarity*100)}%`);
+          log(`🎵 Нота: ${noteName} (${Math.round(pitch)} Гц) | Вход:${inputVolumePercent}% | Выход MIDI:${outputVelocity}`);
         }
       } else if (currentNote !== null && !shouldDetect) {
-        // Сигнал пропал - запускаем таймер отпускания
         if (noteOffTimeout) clearTimeout(noteOffTimeout);
         noteOffTimeout = setTimeout(() => {
           if (currentNote !== null) {
             stopNote();
             currentNote = null;
             document.getElementById('note').innerHTML = '—';
-            log('🎧 Слушаю... (нота отпущена по таймеру)');
           }
         }, noteOffDelay);
       }
     } else if (currentNote !== null) {
-      // Не прошёл фильтр - отпускаем ноту
       if (noteOffTimeout) clearTimeout(noteOffTimeout);
       noteOffTimeout = setTimeout(() => {
         if (currentNote !== null) {
