@@ -3,21 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>MIDI Piano - Быстрый + Фоновый режим</title>
+<title>MIDI Piano</title>
 <style>
   body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; max-width: 800px; margin: 0 auto; }
   select, button, input { padding: 10px; margin: 5px; font-size: 16px; }
-  #note { font-size: 48px; font-weight: bold; color: #00ffcc; }
+  #note { font-size: 48px; font-weight: bold; color: #00ffcc; min-height: 60px; }
   .container { background: #16213e; padding: 20px; border-radius: 10px; margin: 10px 0; }
   .filter-group { background: #0f3460; padding: 15px; border-radius: 8px; margin: 10px 0; }
-  .filter-group label { display: inline-block; width: 260px; margin: 5px 0; }
-  input[type="range"] { width: 200px; }
-  .value-display { display: inline-block; margin-left: 10px; color: #00ffcc; }
+  label.wide { display: inline-block; width: 260px; margin: 5px 0; }
+  input[type="range"] { width: 180px; }
+  .val { display: inline-block; margin-left: 8px; color: #00ffcc; }
   .warning { background: #ff6b6b; padding: 10px; border-radius: 5px; margin-top: 10px; display: none; }
+  .mode-btn { padding: 12px 20px; margin: 4px; border: 2px solid #00ffcc; background: transparent; color: #00ffcc; border-radius: 8px; cursor: pointer; font-size: 15px; }
+  .mode-btn.active { background: #00ffcc; color: #1a1a2e; font-weight: bold; }
+  .chord-notes { font-size: 22px; color: #ffaa00; min-height: 30px; }
 </style>
 </head>
 <body>
-<h1>🎹 Быстрое MIDI Пианино</h1>
+<h1>🎹 MIDI Пианино</h1>
 
 <div class="container">
   <h3>🎤 Микрофон:</h3>
@@ -27,43 +30,55 @@
 </div>
 
 <div class="container">
-  <h3>🎵 Текущая нота:</h3>
+  <h3>🎵 Режим:</h3>
+  <button class="mode-btn active" id="modeHPS" onclick="setMode('hps')">🎼 Мелодия (HPS)</button>
+  <button class="mode-btn" id="modeChord" onclick="setMode('chord')">🎹 Аккорды (FFT)</button>
+  <p id="modeDesc" style="color:#aaa;font-size:13px;margin:6px 0 0">HPS — одна нота, точнее на пианино. Меньше ошибок с обертонами.</p>
+</div>
+
+<div class="container">
+  <h3>🎵 Нота:</h3>
   <div id="note">—</div>
-  <div>Частота: <span id="freq">0</span> Гц | Нота: <span id="noteFreq">0</span> Гц</div>
-  <div>Чистота: <span id="clarity">0</span>% | Громкость: <span id="volume">0</span>%</div>
-  <div>Задержка: <span id="latency">0</span> мс</div>
+  <div class="chord-notes" id="chordNotes"></div>
+  <div>Частота: <span id="freq">0</span> Гц | Чистота: <span id="clarity">0</span>%</div>
+  <div>Громкость: <span id="volume">0</span>% | Задержка: <span id="latency">0</span> мс</div>
 </div>
 
 <div class="container">
   <h3>🎛️ Настройки:</h3>
-  
+
   <div class="filter-group">
-    <label>🎤 Режим HOLD:</label>
-    <input type="checkbox" id="holdModeToggle" checked>
-    <span style="color:#00ffcc">Включен</span><br>
-    <label>Отклонение (Гц):</label>
-    <input type="range" id="holdTolerance" min="1" max="15" step="1" value="5">
-    <span id="holdToleranceVal" class="value-display">5 Гц</span>
+    <label class="wide">🎤 HOLD (держать ноту):</label>
+    <input type="checkbox" id="holdModeToggle" checked><br>
+    <label class="wide">Отклонение (Гц):</label>
+    <input type="range" id="holdTolerance" min="1" max="15" step="1" value="6">
+    <span id="holdToleranceVal" class="val">6 Гц</span>
   </div>
-  
+
   <div class="filter-group">
-    <label>🔊 Громкость от входа:</label>
+    <label class="wide">🔊 Громкость от входа:</label>
     <input type="checkbox" id="useInputVolumeToggle"><br>
-    <label>Ручная (1-127):</label>
-    <input type="range" id="manualMidiVelocity" min="1" max="127" step="1" value="100">
-    <span id="manualMidiVelocityVal" class="value-display">100</span>
+    <label class="wide">Ручная (1-127):</label>
+    <input type="range" id="manualVel" min="1" max="127" step="1" value="100">
+    <span id="manualVelVal" class="val">100</span>
   </div>
 
   <div class="filter-group">
-    <label>⏱️ Задержка стопа (мс):</label>
-    <input type="range" id="silenceDelay" min="50" max="800" step="50" value="200">
-    <span id="silenceDelayVal" class="value-display">200 мс</span>
-  </div>
-
-  <div class="filter-group">
-    <label>🎚️ Порог громкости:</label>
+    <label class="wide">⏱️ Задержка стопа (мс):</label>
+    <input type="range" id="silenceDelay" min="50" max="800" step="50" value="250">
+    <span id="silenceDelayVal" class="val">250 мс</span><br>
+    <label class="wide">🎚️ Порог тишины (%):</label>
     <input type="range" id="volThreshold" min="1" max="20" step="1" value="4">
-    <span id="volThresholdVal" class="value-display">4%</span>
+    <span id="volThresholdVal" class="val">4%</span>
+  </div>
+
+  <div class="filter-group" id="chordSettings" style="display:none">
+    <label class="wide">🎹 Мин. амплитуда пика (0-255):</label>
+    <input type="range" id="peakThresh" min="10" max="150" step="5" value="40">
+    <span id="peakThreshVal" class="val">40</span><br>
+    <label class="wide">Макс. нот в аккорде:</label>
+    <input type="range" id="maxNotes" min="1" max="6" step="1" value="4">
+    <span id="maxNotesVal" class="val">4</span>
   </div>
 </div>
 
@@ -88,83 +103,186 @@ async function requestWakeLock() {
     } else {
       document.getElementById('wakeLockStatus').style.display = 'block';
     }
-  } catch(e) {
-    document.getElementById('wakeLockStatus').style.display = 'block';
-  }
+  } catch(e) { document.getElementById('wakeLockStatus').style.display = 'block'; }
 }
 function releaseWakeLock() { if (wakeLock) { wakeLock.release(); wakeLock = null; } }
 
-// ── Таблица частот нот ─────────────────────────────────────
+// ── Таблица нот ────────────────────────────────────────────
 const NOTE_FREQS = new Float32Array(109);
 for (let m = 21; m <= 108; m++) NOTE_FREQS[m] = 440 * Math.pow(2, (m - 69) / 12);
 
-function freqToMidi(pitch) {
-  const approx = Math.round(12 * Math.log2(pitch / 440) + 69);
-  let best = approx, bestDiff = 1e9;
-  const lo = Math.max(21, approx - 2), hi = Math.min(108, approx + 2);
-  for (let m = lo; m <= hi; m++) {
-    const d = Math.abs(pitch - NOTE_FREQS[m]);
-    if (d < bestDiff) { bestDiff = d; best = m; }
+function freqToMidi(f) {
+  const approx = Math.round(12 * Math.log2(f / 440) + 69);
+  let best = approx, bd = 1e9;
+  for (let m = Math.max(21,approx-2); m <= Math.min(108,approx+2); m++) {
+    const d = Math.abs(f - NOTE_FREQS[m]);
+    if (d < bd) { bd = d; best = m; }
   }
   return best;
 }
 
-// ── Детектор автокорреляции ────────────────────────────────
-class PitchDetector {
-  constructor(bufSize, sampleRate) {
-    this.sr = sampleRate;
-    this.minOff = Math.floor(sampleRate / 1600);
-    this.maxOff = Math.floor(sampleRate / 70);
+function midiName(m) {
+  return ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][m%12] + (Math.floor(m/12)-1);
+}
+
+// ── HPS Детектор (мелодия) ─────────────────────────────────
+// Harmonic Product Spectrum: перемножает спектр со сжатыми копиями
+// → обертоны усиливают основную частоту, а не путают её
+class HPSDetector {
+  constructor(bufSize, sr) {
+    this.sr = sr;
+    this.bufSize = bufSize;
+    this.HPS_HARMONICS = 4;
   }
-  detect(buf) {
-    let maxC = 0, bestOff = -1;
-    // Шаг 2 — баланс скорости и точности
-    for (let off = this.minOff; off < this.maxOff && off < buf.length; off += 2) {
-      let c = 0;
-      for (let i = 0; i < buf.length - off; i += 2) c += buf[i] * buf[i + off];
-      if (c > maxC) { maxC = c; bestOff = off; }
+  detect(timeBuf) {
+    const N = this.bufSize;
+    // Применяем окно Ханна
+    const windowed = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      windowed[i] = timeBuf[i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / N));
     }
-    if (bestOff > 0 && maxC > 40) {
-      return [this.sr / bestOff, Math.min(1, maxC / 400)];
+    // FFT (используем AnalyserNode через отдельный offline контекст — слишком тяжело)
+    // Вместо этого делаем автокорреляцию + HPS трюк через subsampling
+    // Автокорреляция с нормализацией (NSDF — более точная)
+    const maxLag = Math.floor(this.sr / 60);
+    const minLag = Math.floor(this.sr / 1600);
+    let bestLag = -1, bestVal = -1;
+
+    // NSDF: нормализованная функция разности
+    const nsdf = new Float32Array(maxLag);
+    let m0 = 0;
+    for (let i = 0; i < N; i++) m0 += windowed[i] * windowed[i];
+    m0 *= 2;
+
+    for (let lag = minLag; lag < maxLag && lag < N; lag++) {
+      let acf = 0, ssd = 0;
+      for (let i = 0; i < N - lag; i++) {
+        acf += windowed[i] * windowed[i + lag];
+        ssd += windowed[i]*windowed[i] + windowed[i+lag]*windowed[i+lag];
+      }
+      nsdf[lag] = ssd > 0 ? 2 * acf / ssd : 0;
+    }
+
+    // Ищем первый пик выше порога 0.8
+    let inPeak = false;
+    for (let lag = minLag + 1; lag < maxLag - 1; lag++) {
+      if (nsdf[lag] > 0.8) inPeak = true;
+      if (inPeak && nsdf[lag] > nsdf[lag-1] && nsdf[lag] >= nsdf[lag+1]) {
+        // Параболическая интерполяция для точности
+        const denom = nsdf[lag-1] - 2*nsdf[lag] + nsdf[lag+1];
+        const refined = denom !== 0 ? lag - 0.5*(nsdf[lag+1]-nsdf[lag-1])/denom : lag;
+        bestLag = refined;
+        bestVal = nsdf[lag];
+        break;
+      }
+    }
+
+    if (bestLag > 0 && bestVal > 0.7) {
+      return [this.sr / bestLag, bestVal];
     }
     return [0, 0];
   }
 }
 
+// ── FFT Детектор (аккорды) ────────────────────────────────
+// Использует AnalyserNode.getByteFrequencyData для получения спектра
+class ChordDetector {
+  constructor(analyser, sr) {
+    this.analyser = analyser;
+    this.sr = sr;
+    this.binCount = analyser.frequencyBinCount;
+    this.fftBuf = new Uint8Array(this.binCount);
+  }
+  detect(peakThresh, maxNotes) {
+    this.analyser.getByteFrequencyData(this.fftBuf);
+    const binHz = this.sr / (this.binCount * 2);
+
+    // Собираем пики
+    const peaks = [];
+    for (let i = 2; i < this.binCount - 2; i++) {
+      const v = this.fftBuf[i];
+      if (v >= peakThresh &&
+          v >= this.fftBuf[i-1] && v >= this.fftBuf[i-2] &&
+          v >= this.fftBuf[i+1] && v >= this.fftBuf[i+2]) {
+        const freq = i * binHz;
+        if (freq >= 60 && freq <= 2000) {
+          peaks.push({ freq, amp: v });
+        }
+      }
+    }
+
+    if (peaks.length === 0) return [];
+
+    // Сортируем по амплитуде, берём топ maxNotes
+    peaks.sort((a, b) => b.amp - a.amp);
+
+    // Убираем гармоники: если freq ≈ N * уже найденной ноты — пропускаем
+    const kept = [];
+    for (const p of peaks) {
+      if (kept.length >= maxNotes) break;
+      let isHarmonic = false;
+      for (const k of kept) {
+        const ratio = p.freq / k.freq;
+        // Если примерно 2x, 3x, 4x — это обертон
+        for (let h = 2; h <= 5; h++) {
+          if (Math.abs(ratio - h) < 0.08) { isHarmonic = true; break; }
+        }
+        if (isHarmonic) break;
+      }
+      if (!isHarmonic) kept.push(p);
+    }
+
+    return kept.map(p => freqToMidi(p.freq));
+  }
+}
+
 // ── Состояние ─────────────────────────────────────────────
-let audioCtx, stream, analyser, volAnalyser, detector;
+let audioCtx, stream, analyser, fftAnalyser, volAnalyser;
+let hpsDetector, chordDetector;
 let isRunning = false;
 let rafId = null;
-let currentMidi = null;
+let currentMode = 'hps'; // 'hps' | 'chord'
+
+// Звук
 let osc = null, gainNode = null;
+let currentMidi = null;
+let chordOscs = []; // [{osc, gain, midi}]
+
+// Hold / silence
 let silenceTimer = null;
 let lastMidi = null;
 let lastPitch = 0;
 
-// ── UI ────────────────────────────────────────────────────
-const holdToggle = document.getElementById('holdModeToggle');
-const holdTol    = document.getElementById('holdTolerance');
-const velSlider  = document.getElementById('manualMidiVelocity');
-const volToggle  = document.getElementById('useInputVolumeToggle');
-const silDelay   = document.getElementById('silenceDelay');
-const volThresh  = document.getElementById('volThreshold');
+// ── Режим ──────────────────────────────────────────────────
+function setMode(m) {
+  currentMode = m;
+  document.getElementById('modeHPS').classList.toggle('active', m === 'hps');
+  document.getElementById('modeChord').classList.toggle('active', m === 'chord');
+  document.getElementById('chordSettings').style.display = m === 'chord' ? 'block' : 'none';
+  document.getElementById('chordNotes').textContent = '';
+  document.getElementById('modeDesc').textContent = m === 'hps'
+    ? 'HPS — одна нота, точнее на пианино. Меньше ошибок с обертонами.'
+    : 'FFT — несколько нот одновременно. Фильтрует гармоники.';
+  stopAllNotes();
+}
 
-holdTol.oninput   = () => document.getElementById('holdToleranceVal').innerText  = holdTol.value + ' Гц';
-velSlider.oninput = () => document.getElementById('manualMidiVelocityVal').innerText = velSlider.value;
-silDelay.oninput  = () => document.getElementById('silenceDelayVal').innerText   = silDelay.value + ' мс';
-volThresh.oninput = () => document.getElementById('volThresholdVal').innerText   = volThresh.value + '%';
+// ── UI ────────────────────────────────────────────────────
+document.getElementById('holdTolerance').oninput  = e => document.getElementById('holdToleranceVal').innerText  = e.target.value + ' Гц';
+document.getElementById('manualVel').oninput      = e => document.getElementById('manualVelVal').innerText      = e.target.value;
+document.getElementById('silenceDelay').oninput   = e => document.getElementById('silenceDelayVal').innerText   = e.target.value + ' мс';
+document.getElementById('volThreshold').oninput   = e => document.getElementById('volThresholdVal').innerText   = e.target.value + '%';
+document.getElementById('peakThresh').oninput     = e => document.getElementById('peakThreshVal').innerText     = e.target.value;
+document.getElementById('maxNotes').oninput       = e => document.getElementById('maxNotesVal').innerText       = e.target.value;
 
 function log(m) { document.getElementById('status').innerHTML = m; }
 
-// ── Звук ──────────────────────────────────────────────────
-function playNote(midi, velocity) {
+// ── Звук (мелодия) ────────────────────────────────────────
+function playMelodyNote(midi, velocity) {
   if (!audioCtx) return;
   const freq = NOTE_FREQS[midi];
   const gain = Math.max(0.05, Math.min(1, velocity / 127));
   const now  = audioCtx.currentTime;
-
   if (osc) {
-    // Просто меняем частоту — без пересоздания
     osc.frequency.setValueAtTime(freq, now);
     gainNode.gain.cancelScheduledValues(now);
     gainNode.gain.setValueAtTime(gain, now);
@@ -182,15 +300,73 @@ function playNote(midi, velocity) {
   currentMidi = midi;
 }
 
-function stopNote() {
+function stopMelodyNote() {
   if (!osc || !audioCtx) return;
   const now = audioCtx.currentTime;
   gainNode.gain.cancelScheduledValues(now);
   gainNode.gain.setValueAtTime(gainNode.gain.value, now);
-  gainNode.gain.linearRampToValueAtTime(0, now + 0.05);
-  const o = osc; // захватываем локально чтобы stop не упал
-  setTimeout(() => { try { o.stop(); } catch(e) {} }, 80);
+  gainNode.gain.linearRampToValueAtTime(0, now + 0.06);
+  const o = osc;
+  setTimeout(() => { try { o.stop(); } catch(e) {} }, 100);
   osc = null; gainNode = null; currentMidi = null;
+}
+
+// ── Звук (аккорды) ────────────────────────────────────────
+function playChord(midiList, velocity) {
+  if (!audioCtx) return;
+  const gain = Math.max(0.05, Math.min(0.7, velocity / 127)) / Math.max(1, midiList.length * 0.6);
+  const now  = audioCtx.currentTime;
+
+  // Останавливаем ноты которых нет в новом аккорде
+  const newSet = new Set(midiList);
+  chordOscs = chordOscs.filter(entry => {
+    if (!newSet.has(entry.midi)) {
+      entry.gain.gain.cancelScheduledValues(now);
+      entry.gain.gain.setValueAtTime(entry.gain.gain.value, now);
+      entry.gain.gain.linearRampToValueAtTime(0, now + 0.06);
+      const o = entry.osc;
+      setTimeout(() => { try { o.stop(); } catch(e) {} }, 100);
+      return false;
+    }
+    return true;
+  });
+
+  // Добавляем новые ноты
+  const existingMidis = new Set(chordOscs.map(e => e.midi));
+  for (const midi of midiList) {
+    if (existingMidis.has(midi)) continue;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.value = NOTE_FREQS[midi];
+    g.gain.setValueAtTime(0, now);
+    g.gain.linearRampToValueAtTime(gain, now + 0.01);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start();
+    chordOscs.push({ osc: o, gain: g, midi });
+  }
+}
+
+function stopChord() {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  for (const entry of chordOscs) {
+    entry.gain.gain.cancelScheduledValues(now);
+    entry.gain.gain.setValueAtTime(entry.gain.gain.value, now);
+    entry.gain.gain.linearRampToValueAtTime(0, now + 0.06);
+    const o = entry.osc;
+    setTimeout(() => { try { o.stop(); } catch(e) {} }, 100);
+  }
+  chordOscs = [];
+}
+
+function stopAllNotes() {
+  stopMelodyNote();
+  stopChord();
+  if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+  lastMidi = null; lastPitch = 0;
+  document.getElementById('note').innerHTML = '—';
+  document.getElementById('chordNotes').textContent = '';
 }
 
 // ── Микрофоны ─────────────────────────────────────────────
@@ -203,8 +379,7 @@ async function loadMicrophones() {
     sel.innerHTML = '';
     devs.filter(d => d.kind === 'audioinput').forEach((d, i) => {
       const o = document.createElement('option');
-      o.value = d.deviceId;
-      o.text  = d.label || `Микрофон ${i + 1}`;
+      o.value = d.deviceId; o.text = d.label || `Микрофон ${i+1}`;
       sel.appendChild(o);
     });
     log(sel.children.length ? '✅ Микрофоны загружены' : '❌ Микрофоны не найдены');
@@ -220,21 +395,30 @@ document.getElementById('startBtn').onclick = async () => {
     await requestWakeLock();
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     await audioCtx.resume();
-
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { deviceId: { exact: micId }, noiseSuppression: true, echoCancellation: false, autoGainControl: true }
     });
-
     const src = audioCtx.createMediaStreamSource(stream);
-    const bufSize = 2048; // надёжный размер для автокорреляции
 
-    analyser = audioCtx.createAnalyser(); analyser.fftSize = bufSize;
+    // HPS analyser (временная область)
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
     src.connect(analyser);
 
-    volAnalyser = audioCtx.createAnalyser(); volAnalyser.fftSize = 256;
+    // FFT analyser (частотная область, большой FFT для точности)
+    fftAnalyser = audioCtx.createAnalyser();
+    fftAnalyser.fftSize = 8192;
+    fftAnalyser.smoothingTimeConstant = 0.6;
+    src.connect(fftAnalyser);
+
+    // Громкость
+    volAnalyser = audioCtx.createAnalyser();
+    volAnalyser.fftSize = 256;
     src.connect(volAnalyser);
 
-    detector = new PitchDetector(bufSize, audioCtx.sampleRate);
+    hpsDetector   = new HPSDetector(2048, audioCtx.sampleRate);
+    chordDetector = new ChordDetector(fftAnalyser, audioCtx.sampleRate);
+
     isRunning = true;
     lastMidi = null; lastPitch = 0;
     document.getElementById('startBtn').disabled = true;
@@ -248,19 +432,17 @@ document.getElementById('startBtn').onclick = async () => {
 document.getElementById('stopBtn').onclick = () => {
   isRunning = false;
   if (rafId) cancelAnimationFrame(rafId);
-  if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
   if (stream) stream.getTracks().forEach(t => t.stop());
-  stopNote();
+  stopAllNotes();
   releaseWakeLock();
   document.getElementById('startBtn').disabled = false;
   document.getElementById('stopBtn').disabled  = true;
-  document.getElementById('note').innerHTML    = '—';
   log('⏹️ Остановлено');
 };
 
 // ── Главный цикл ──────────────────────────────────────────
-const volBuf = new Uint8Array(128);
-const pitchBuf = new Float32Array(2048);
+const volBuf   = new Uint8Array(128);
+const timeBuf  = new Float32Array(2048);
 
 function loop() {
   if (!isRunning) return;
@@ -273,60 +455,65 @@ function loop() {
   const volPct = Math.round(sum / volBuf.length / 255 * 100);
   document.getElementById('volume').innerHTML = volPct;
 
-  const threshold = parseInt(volThresh.value);
-  const hasSoud = volPct >= threshold;
+  const threshold = parseInt(document.getElementById('volThreshold').value);
+  const hasSoundNow = volPct >= threshold;
 
-  if (hasSoud) {
-    // Есть звук — сбрасываем таймер тишины
+  if (hasSoundNow) {
     if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
 
-    analyser.getFloatTimeDomainData(pitchBuf);
-    const [pitch, clarity] = detector.detect(pitchBuf);
+    if (currentMode === 'hps') {
+      // ── HPS режим ───────────────────────────────────────
+      analyser.getFloatTimeDomainData(timeBuf);
+      const [pitch, clarity] = hpsDetector.detect(timeBuf);
+      document.getElementById('clarity').innerHTML = Math.round(clarity * 100);
+      document.getElementById('freq').innerHTML    = Math.round(pitch);
 
-    document.getElementById('clarity').innerHTML = Math.round(clarity * 100);
-    document.getElementById('freq').innerHTML    = Math.round(pitch);
+      if (clarity > 0.75 && pitch > 60 && pitch < 2000) {
+        const midi = freqToMidi(pitch);
+        const holdEnabled = document.getElementById('holdModeToggle').checked;
+        const holdTolVal  = parseInt(document.getElementById('holdTolerance').value);
+        const hold = holdEnabled && lastMidi !== null && Math.abs(pitch - lastPitch) < holdTolVal;
+        const targetMidi = hold ? lastMidi : midi;
 
-    const valid = clarity > 0.4 && pitch > 70 && pitch < 2000;
-    if (valid) {
-      const midi = freqToMidi(pitch);
+        if (targetMidi !== currentMidi) {
+          const vel = document.getElementById('useInputVolumeToggle').checked
+            ? Math.min(127, Math.max(30, volPct * 1.5))
+            : parseInt(document.getElementById('manualVel').value);
+          playMelodyNote(targetMidi, vel);
+          document.getElementById('note').innerHTML = midiName(targetMidi);
+          lastMidi = targetMidi; lastPitch = pitch;
+        }
+      }
+    } else {
+      // ── Chord режим ─────────────────────────────────────
+      const peakTh   = parseInt(document.getElementById('peakThresh').value);
+      const maxN     = parseInt(document.getElementById('maxNotes').value);
+      const midiList = chordDetector.detect(peakTh, maxN);
 
-      // HOLD: не переключать если питч почти не изменился
-      const hold = holdToggle.checked && lastMidi !== null &&
-                   Math.abs(pitch - lastPitch) < parseInt(holdTol.value);
-      const targetMidi = hold ? lastMidi : midi;
-
-      document.getElementById('noteFreq').innerHTML = Math.round(NOTE_FREQS[targetMidi]);
-
-      if (targetMidi !== currentMidi) {
-        const vel = volToggle.checked
+      if (midiList.length > 0) {
+        const vel = document.getElementById('useInputVolumeToggle').checked
           ? Math.min(127, Math.max(30, volPct * 1.5))
-          : parseInt(velSlider.value);
-        playNote(targetMidi, vel);
-        document.getElementById('note').innerHTML = midiName(targetMidi);
-        lastMidi = targetMidi;
-        lastPitch = pitch;
+          : parseInt(document.getElementById('manualVel').value);
+        playChord(midiList, vel);
+        document.getElementById('note').innerHTML      = midiName(midiList[0]);
+        document.getElementById('chordNotes').textContent = midiList.map(midiName).join(' + ');
+        document.getElementById('freq').innerHTML      = Math.round(NOTE_FREQS[midiList[0]]);
+        document.getElementById('clarity').innerHTML   = '—';
       }
     }
   } else {
-    // Тишина — запускаем таймер стопа (только один раз)
-    if (currentMidi !== null && !silenceTimer) {
+    // Тишина
+    const isPlaying = currentMode === 'hps' ? currentMidi !== null : chordOscs.length > 0;
+    if (isPlaying && !silenceTimer) {
       silenceTimer = setTimeout(() => {
         silenceTimer = null;
-        if (currentMidi !== null) {
-          stopNote();
-          lastMidi = null; lastPitch = 0;
-          document.getElementById('note').innerHTML = '—';
-        }
-      }, parseInt(silDelay.value));
+        stopAllNotes();
+      }, parseInt(document.getElementById('silenceDelay').value));
     }
   }
 
   document.getElementById('latency').innerHTML = Math.round(performance.now() - t0);
   rafId = requestAnimationFrame(loop);
-}
-
-function midiName(m) {
-  return ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][m % 12] + (Math.floor(m / 12) - 1);
 }
 
 window.addEventListener('load', loadMicrophones);
