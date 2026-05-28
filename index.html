@@ -3,13 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MIDI Piano from Mic - Full Version</title>
+<title>MIDI Piano from Mic - Fixed</title>
 <style>
-  body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; }
+  body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; max-width: 800px; margin: 0 auto; }
   select, button { padding: 10px; margin: 5px; font-size: 16px; }
   #note { font-size: 48px; font-weight: bold; color: #00ffcc; }
   .container { background: #16213e; padding: 20px; border-radius: 10px; margin: 10px 0; }
   .error { color: #ff6b6b; }
+  .loading { color: #ffaa00; }
 </style>
 </head>
 <body>
@@ -17,8 +18,10 @@
 
 <div class="container">
   <h3>1. Выбери микрофон:</h3>
-  <select id="micSelect"></select>
-  <button id="startBtn">🎤 Запустить</button>
+  <select id="micSelect" disabled>
+    <option>Загрузка микрофонов...</option>
+  </select>
+  <button id="startBtn" disabled>🎤 Запустить</button>
   <button id="stopBtn" disabled>⏹️ Стоп</button>
 </div>
 
@@ -30,144 +33,217 @@
 </div>
 
 <div class="container">
-  <h3>3. MIDI вывод:</h3>
-  <div>🎵 Ноты отправляются на встроенный синтезатор</div>
-  <div id="midiLog">Готов к работе...</div>
+  <h3>3. Статус:</h3>
+  <div id="midiLog">⏳ Загрузка библиотек...</div>
 </div>
 
 <script>
-// ========== ПОЛНАЯ ВЕРСИЯ ==========
-// Используем библиотеку Pitchy для распознавания нот
-// (работает без интернета после загрузки)
-
-const script = document.createElement('script');
-script.src = 'https://cdn.jsdelivr.net/npm/pitchy@4.1.0/build/index.min.js';
-script.onload = () => init();
-document.head.appendChild(script);
-
-let audioContext, source, stream, analyser, detector;
+// Глобальные переменные
+let audioContext = null;
+let source = null;
+let stream = null;
+let analyser = null;
+let detector = null;
 let isRunning = false;
 let currentNote = null;
 let animationId = null;
-
-// MIDI синтезатор (встроенный в браузер)
-let midiOutput = null;
 let synth = null;
+let isReady = false;
 
-function init() {
-  if (!window.Pitchy) {
-    document.getElementById('midiLog').innerHTML = '❌ Ошибка загрузки Pitchy';
-    return;
-  }
-  
-  // Создаём встроенный синтезатор для вывода звука
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  synth = {
-    playNote: (midiNote, velocity) => {
-      const now = audioContext.currentTime;
-      const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
-      
-      const osc = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.value = velocity / 127;
-      
-      osc.connect(gain);
-      gain.connect(audioContext.destination);
-      
-      osc.start();
-      gain.gain.exponentialRampToValueAtTime(0.00001, now + 0.5);
-      osc.stop(now + 0.5);
-    }
-  };
-  
-  loadMicrophones();
+// Функция для логов
+function logMessage(msg, isError = false) {
+  const logDiv = document.getElementById('midiLog');
+  logDiv.innerHTML = msg;
+  logDiv.className = isError ? 'error' : '';
 }
 
+// Функция для обновления UI кнопок
+function setButtonsState(startEnabled, stopEnabled) {
+  document.getElementById('startBtn').disabled = !startEnabled;
+  document.getElementById('stopBtn').disabled = !stopEnabled;
+}
+
+// Загружаем Pitchy динамически
+function loadPitchy() {
+  return new Promise((resolve, reject) => {
+    if (window.Pitchy) {
+      resolve();
+      return;
+    }
+    
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/pitchy@4.1.0/build/index.min.js';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Не удалось загрузить Pitchy'));
+    document.head.appendChild(script);
+  });
+}
+
+// Инициализация всего приложения
+async function init() {
+  try {
+    logMessage('⏳ Загрузка библиотеки распознавания нот...');
+    await loadPitchy();
+    
+    logMessage('✅ Библиотека загружена! Создаём аудиоконтекст...');
+    
+    // Создаём аудиоконтекст (без resume, чтобы не блокировать)
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Создаём синтезатор
+    synth = {
+      playNote: (midiNote, velocity) => {
+        if (!audioContext) return;
+        const now = audioContext.currentTime;
+        const freq = 440 * Math.pow(2, (midiNote - 69) / 12);
+        const osc = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.value = velocity / 127;
+        osc.connect(gain);
+        gain.connect(audioContext.destination);
+        osc.start();
+        gain.gain.exponentialRampToValueAtTime(0.00001, now + 0.5);
+        osc.stop(now + 0.5);
+      }
+    };
+    
+    logMessage('✅ Готово! Загружаем список микрофонов...');
+    await loadMicrophones();
+    
+    isReady = true;
+    setButtonsState(true, false);
+    logMessage('✅ Всё готово! Выберите микрофон и нажмите "Запустить"');
+    
+  } catch(err) {
+    logMessage(`❌ Ошибка инициализации: ${err.message}`, true);
+    console.error(err);
+  }
+}
+
+// Загрузка микрофонов
 async function loadMicrophones() {
   try {
+    await navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => stream.getTracks().forEach(track => track.stop()));
+    
     const devices = await navigator.mediaDevices.enumerateDevices();
     const micSelect = document.getElementById('micSelect');
+    micSelect.innerHTML = '<option value="">-- Выберите микрофон --</option>';
     
+    let micCount = 0;
     devices.forEach(device => {
       if (device.kind === 'audioinput') {
+        micCount++;
         const option = document.createElement('option');
         option.value = device.deviceId;
-        option.text = device.label || `Микрофон ${micSelect.length + 1}`;
+        option.text = device.label || `Микрофон ${micCount}`;
         micSelect.appendChild(option);
       }
     });
-  } catch(e) {
-    console.error('Ошибка загрузки микрофонов:', e);
+    
+    micSelect.disabled = false;
+    
+    if (micCount === 0) {
+      logMessage('⚠️ Микрофоны не найдены. Подключите микрофон к устройству.', true);
+    } else {
+      logMessage(`✅ Найдено микрофонов: ${micCount}. Выберите нужный и нажмите "Запустить"`);
+    }
+    
+  } catch(err) {
+    logMessage(`❌ Нет доступа к микрофону. Разрешите доступ в браузере. Ошибка: ${err.message}`, true);
+    console.error(err);
   }
 }
 
+// Запуск прослушивания
 document.getElementById('startBtn').onclick = async () => {
-  if (isRunning) return;
+  if (!isReady || isRunning) {
+    logMessage('⚠️ Подождите, инициализация ещё не завершена');
+    return;
+  }
   
   const micId = document.getElementById('micSelect').value;
+  if (!micId) {
+    logMessage('⚠️ Выберите микрофон из списка', true);
+    return;
+  }
   
   try {
-    // Запрашиваем микрофон с шумоподавлением
+    logMessage('🎤 Запрашиваем доступ к микрофону...');
+    
+    // Важно: сначала resume, потом getUserMedia
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+    
     stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        deviceId: micId ? { exact: micId } : undefined,
-        noiseSuppression: true,    // Убираем шум
+        deviceId: { exact: micId },
+        noiseSuppression: true,
         echoCancellation: true,
         autoGainControl: true
       }
     });
     
-    await audioContext.resume();
+    logMessage('✅ Микрофон подключён. Создаём анализатор...');
     
     source = audioContext.createMediaStreamSource(stream);
     analyser = audioContext.createAnalyser();
     analyser.fftSize = 2048;
-    
     source.connect(analyser);
     
-    // Создаём детектор нот
+    // Создаём детектор
     const bufferSize = 2048;
     detector = window.Pitchy.PitchDetector.forFloat32Array(bufferSize);
     
     isRunning = true;
-    document.getElementById('startBtn').disabled = true;
-    document.getElementById('stopBtn').disabled = false;
-    document.getElementById('midiLog').innerHTML = '🎧 Слушаю микрофон...';
+    setButtonsState(false, true);
+    logMessage('🎧 СЛУШАЮ... Играйте на пианино или пойте в микрофон!');
+    document.getElementById('note').innerHTML = '—';
+    document.getElementById('freq').innerHTML = '0';
+    document.getElementById('clarity').innerHTML = '0';
     
     startDetection();
     
   } catch(err) {
-    document.getElementById('midiLog').innerHTML = `❌ Ошибка: ${err.message}`;
+    logMessage(`❌ Ошибка: ${err.message}. Проверьте разрешения и выбранный микрофон.`, true);
+    console.error(err);
+    setButtonsState(true, false);
   }
 };
 
+// Остановка
 document.getElementById('stopBtn').onclick = () => {
   if (animationId) cancelAnimationFrame(animationId);
-  if (stream) stream.getTracks().forEach(track => track.stop());
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
   isRunning = false;
+  currentNote = null;
   
-  document.getElementById('startBtn').disabled = false;
-  document.getElementById('stopBtn').disabled = true;
+  setButtonsState(true, false);
   document.getElementById('note').innerHTML = '—';
-  document.getElementById('midiLog').innerHTML = '⏹️ Остановлено';
+  document.getElementById('freq').innerHTML = '0';
+  document.getElementById('clarity').innerHTML = '0';
+  logMessage('⏹️ Остановлено. Нажмите "Запустить" для новой сессии');
 };
 
+// Функция распознавания
 function startDetection() {
   const buffer = new Float32Array(analyser.fftSize);
   
   function detect() {
-    if (!isRunning) return;
+    if (!isRunning || !detector || !analyser) return;
     
     analyser.getFloatTimeDomainData(buffer);
     
-    // Алгоритм распознавания ноты
     try {
       const [pitch, clarity] = detector.findPitch(buffer, audioContext.sampleRate);
       
-      if (pitch > 80 && pitch < 3000 && clarity > 0.85) { // Чистота >85%
+      if (pitch > 80 && pitch < 3000 && clarity > 0.85) {
         const midiNote = Math.round(12 * Math.log2(pitch / 440) + 69);
         const noteName = midiToNoteName(midiNote);
         
@@ -175,28 +251,20 @@ function startDetection() {
         document.getElementById('freq').innerHTML = Math.round(pitch);
         document.getElementById('clarity').innerHTML = Math.round(clarity * 100);
         
-        // Если нота изменилась - отправляем MIDI
         if (currentNote !== midiNote) {
-          if (currentNote !== null) {
-            // Отпускаем предыдущую ноту
-            synth.playNote(currentNote, 0);
-          }
-          
-          // Играем новую ноту
-          synth.playNote(midiNote, 100);
+          if (currentNote !== null && synth) synth.playNote(currentNote, 0);
+          if (synth) synth.playNote(midiNote, 100);
           currentNote = midiNote;
-          
-          document.getElementById('midiLog').innerHTML = `🎵 Нота отправлена: ${noteName} (MIDI ${midiNote})`;
+          logMessage(`🎵 Нота: ${noteName} (${Math.round(pitch)} Гц) - MIDI ${midiNote}`);
         }
       } else if (currentNote !== null) {
-        // Сигнал прервался - отпускаем ноту
-        synth.playNote(currentNote, 0);
+        if (synth) synth.playNote(currentNote, 0);
         currentNote = null;
         document.getElementById('clarity').innerHTML = '0';
+        logMessage('🎧 Слушаю...');
       }
-      
     } catch(e) {
-      // Тишина или шум
+      // Тишина или шум - игнорируем
     }
     
     animationId = requestAnimationFrame(detect);
@@ -205,6 +273,7 @@ function startDetection() {
   detect();
 }
 
+// Конвертация MIDI в ноту
 function midiToNoteName(midi) {
   const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   const octave = Math.floor(midi / 12) - 1;
@@ -212,10 +281,7 @@ function midiToNoteName(midi) {
   return `${note}${octave}`;
 }
 
-// Автозапуск при загрузке
+// Запускаем инициализацию при загрузке страницы
 window.addEventListener('load', () => {
-  document.getElementById('midiLog').innerHTML = '✅ Готов. Нажми "Запустить" и разреши доступ к микрофону.';
+  init();
 });
-</script>
-</body>
-</html>
