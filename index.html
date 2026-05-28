@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>MIDI Piano - Фикс микрофонов</title>
+<title>MIDI Piano - Полная версия</title>
 <style>
   body { font-family: Arial; padding: 20px; background: #1a1a2e; color: white; max-width: 800px; margin: 0 auto; }
   select, button, input { padding: 10px; margin: 5px; font-size: 16px; }
@@ -17,7 +17,7 @@
 </style>
 </head>
 <body>
-<h1>🎹 MIDI Пианино</h1>
+<h1>🎹 Умное MIDI Пианино (Hold + Квантование)</h1>
 
 <div class="container">
   <div class="mic-status" id="micStatus">🔴 Нажмите "Запросить доступ"</div>
@@ -34,21 +34,52 @@
 <div class="container">
   <h3>🎵 Текущая нота:</h3>
   <div id="note">—</div>
-  <div>Частота: <span id="freq">0</span> Гц</div>
+  <div>Сырая частота: <span id="rawFreq">0</span> Гц</div>
+  <div>Квантованная частота: <span id="quantizedFreq">0</span> Гц</div>
+  <div>Разница до эталона: <span id="diff">0</span> Гц</div>
   <div>Чистота: <span id="clarity">0</span>% | Громкость: <span id="volume">0</span>%</div>
-  <div>Задержка: <span id="latency">0</span> мс</div>
 </div>
 
 <div class="container">
-  <h3>⚡ Настройки скорости:</h3>
+  <h3>🎛️ Настройки:</h3>
+  
   <div class="filter-group">
-    <label>Ультра-быстрый режим:</label>
-    <input type="checkbox" id="ultraFastMode" checked> Включен
+    <label>🎤 Режим HOLD (удерживать ноту):</label>
+    <input type="checkbox" id="holdModeToggle" checked> 
+    <span style="color:#00ffcc">Включен</span><br>
+    <label>Допустимое отклонение (Гц):</label>
+    <input type="range" id="holdTolerance" min="1" max="15" step="1" value="5">
+    <span id="holdToleranceVal" class="value-display">5 Гц</span>
+    <small>В пределах этого отклонения нота НЕ меняется</small>
   </div>
+  
   <div class="filter-group">
-    <label>Громкость выхода (1-127):</label>
+    <label>📐 Метод квантования:</label>
+    <input type="radio" name="quantMode" id="quantNearest" value="nearest" checked> 
+    <span style="color:#00ffcc">Ближайшая нота</span><br>
+    <input type="radio" name="quantMode" id="quantWeighted" value="weighted"> 
+    <span style="color:#ffaa00">🎯 Взвешенное (по разнице в Гц)</span>
+  </div>
+  
+  <div class="filter-group">
+    <label>🔊 Громкость выхода:</label>
+    <input type="checkbox" id="useInputVolumeToggle"> 
+    <span style="color:#00ffcc">Зависеть от входа</span><br>
+    <label>Ручная (1-127):</label>
     <input type="range" id="manualMidiVelocity" min="1" max="127" step="1" value="100">
-    <span id="manualMidiVelocityVal">100</span>
+    <span id="manualMidiVelocityVal" class="value-display">100</span>
+  </div>
+  
+  <div class="filter-group">
+    <label>⏱️ Задержка отпускания (мс):</label>
+    <input type="range" id="noteOffDelay" min="0" max="1000" step="50" value="300">
+    <span id="noteOffDelayVal" class="value-display">300 мс</span>
+  </div>
+  
+  <div class="filter-group">
+    <label>⚡ Ультра-быстрый режим:</label>
+    <input type="checkbox" id="ultraFastMode"> 
+    <span style="color:#00ffcc">Включен (меньше буфер)</span>
   </div>
 </div>
 
@@ -59,7 +90,9 @@ let currentMidiNote = null;
 let activeOscillator = null;
 let activeGain = null;
 let animationId = null;
-let mediaStream = null; // сохраняем стрим для остановки
+let noteOffTimeout = null;
+let lastStablePitch = 0;
+let mediaStream = null;
 
 // Таблица частот нот
 const NOTE_FREQS = [];
@@ -67,7 +100,7 @@ for (let midi = 21; midi <= 108; midi++) {
   NOTE_FREQS[midi] = 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-// Быстрый детектор
+// Детектор
 class FastPitchDetector {
   constructor(bufferSize, sampleRate) {
     this.bufferSize = bufferSize;
@@ -103,25 +136,107 @@ class FastPitchDetector {
 
 let detector = null;
 
+// UI элементы
+const holdModeToggle = document.getElementById('holdModeToggle');
+const holdTolerance = document.getElementById('holdTolerance');
+const quantNearest = document.getElementById('quantNearest');
+const quantWeighted = document.getElementById('quantWeighted');
+const noteOffDelaySlider = document.getElementById('noteOffDelay');
+const manualMidiVelocity = document.getElementById('manualMidiVelocity');
+const useInputVolumeToggle = document.getElementById('useInputVolumeToggle');
+const ultraFastMode = document.getElementById('ultraFastMode');
+
+holdTolerance.oninput = () => document.getElementById('holdToleranceVal').innerText = holdTolerance.value + ' Гц';
+noteOffDelaySlider.oninput = () => document.getElementById('noteOffDelayVal').innerText = noteOffDelaySlider.value + ' мс';
+manualMidiVelocity.oninput = () => document.getElementById('manualMidiVelocityVal').innerText = manualMidiVelocity.value;
+
 function log(msg, isError = false) {
   const statusDiv = document.getElementById('micStatus');
   statusDiv.innerHTML = isError ? `❌ ${msg}` : `✅ ${msg}`;
   statusDiv.style.background = isError ? '#ff6b6b' : '#2a6b4e';
 }
 
-// ⭐ ГЛАВНОЕ: запрос доступа к микрофону и получение списка
+// Функция квантования
+function quantizePitch(pitch, method) {
+  if (pitch <= 0) return null;
+  
+  const rawMidi = 12 * Math.log2(pitch / 440) + 69;
+  
+  if (method === 'nearest') {
+    const midiRound = Math.round(rawMidi);
+    const freq = NOTE_FREQS[midiRound];
+    return { midi: midiRound, freq: freq, diff: Math.abs(pitch - freq) };
+  } else {
+    const midiFloor = Math.floor(rawMidi);
+    const midiCeil = Math.ceil(rawMidi);
+    const diffFloor = Math.abs(pitch - NOTE_FREQS[midiFloor]);
+    const diffCeil = Math.abs(pitch - NOTE_FREQS[midiCeil]);
+    
+    if (diffFloor < diffCeil) {
+      return { midi: midiFloor, freq: NOTE_FREQS[midiFloor], diff: diffFloor };
+    } else {
+      return { midi: midiCeil, freq: NOTE_FREQS[midiCeil], diff: diffCeil };
+    }
+  }
+}
+
+// Звук
+function updatePlayingNote(midiNote, velocity) {
+  if (!audioContext) return;
+  
+  const frequency = NOTE_FREQS[midiNote];
+  const gainValue = Math.min(1, Math.max(0, velocity / 127));
+  
+  if (activeOscillator && currentMidiNote !== null) {
+    try {
+      activeOscillator.frequency.linearRampToValueAtTime(frequency, audioContext.currentTime + 0.02);
+      if (activeGain) activeGain.gain.linearRampToValueAtTime(gainValue, audioContext.currentTime + 0.02);
+    } catch(e) {}
+  } else {
+    if (activeOscillator) try { activeOscillator.stop(); } catch(e) {}
+    
+    activeOscillator = audioContext.createOscillator();
+    activeGain = audioContext.createGain();
+    activeOscillator.type = 'sine';
+    activeOscillator.frequency.value = frequency;
+    
+    const now = audioContext.currentTime;
+    activeGain.gain.setValueAtTime(0, now);
+    activeGain.gain.linearRampToValueAtTime(gainValue, now + 0.03);
+    
+    activeOscillator.connect(activeGain);
+    activeGain.connect(audioContext.destination);
+    activeOscillator.start();
+  }
+  
+  currentMidiNote = midiNote;
+}
+
+function stopPlayingNote() {
+  if (activeOscillator) {
+    try {
+      if (activeGain) {
+        const now = audioContext.currentTime;
+        activeGain.gain.linearRampToValueAtTime(0, now + 0.05);
+        activeOscillator.stop(now + 0.05);
+      } else activeOscillator.stop();
+    } catch(e) {}
+    activeOscillator = null;
+    activeGain = null;
+  }
+  currentMidiNote = null;
+}
+
+// Запрос доступа к микрофону
 async function requestMicrophoneAccess() {
   log('Запрашиваем доступ к микрофону...');
   
   try {
-    // Сначала запрашиваем разрешение
     const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Сразу закрываем временный стрим
     tempStream.getTracks().forEach(track => track.stop());
     
     log('Доступ разрешён! Загружаем список микрофонов...');
     
-    // Теперь можно получить список устройств
     const devices = await navigator.mediaDevices.enumerateDevices();
     const micSelect = document.getElementById('micSelect');
     micSelect.innerHTML = '';
@@ -138,7 +253,7 @@ async function requestMicrophoneAccess() {
     });
     
     if (micCount === 0) {
-      log('Микрофоны не найдены! Подключите микрофон.', true);
+      log('Микрофоны не найдены!', true);
       micSelect.innerHTML = '<option>Микрофоны не найдены</option>';
       micSelect.disabled = true;
       document.getElementById('startBtn').disabled = true;
@@ -149,12 +264,12 @@ async function requestMicrophoneAccess() {
     }
     
   } catch(err) {
-    log(`Ошибка: ${err.message}. Разрешите доступ к микрофону в браузере.`, true);
+    log(`Ошибка: ${err.message}. Разрешите доступ к микрофону.`, true);
     console.error(err);
   }
 }
 
-// Запуск обработки звука
+// Запуск обработки
 async function startProcessing() {
   if (isRunning) return;
   
@@ -181,7 +296,7 @@ async function startProcessing() {
     
     source = audioContext.createMediaStreamSource(mediaStream);
     
-    const bufferSize = document.getElementById('ultraFastMode').checked ? 1024 : 2048;
+    const bufferSize = ultraFastMode.checked ? 1024 : 2048;
     analyser = audioContext.createAnalyser();
     analyser.fftSize = bufferSize;
     source.connect(analyser);
@@ -191,6 +306,7 @@ async function startProcessing() {
     source.connect(volumeAnalyser);
     
     detector = new FastPitchDetector(bufferSize, audioContext.sampleRate);
+    lastStablePitch = 0;
     
     isRunning = true;
     document.getElementById('startBtn').disabled = true;
@@ -206,109 +322,40 @@ async function startProcessing() {
   }
 }
 
+// Остановка
 function stopProcessing() {
   if (animationId) cancelAnimationFrame(animationId);
+  if (noteOffTimeout) clearTimeout(noteOffTimeout);
   
   if (mediaStream) {
     mediaStream.getTracks().forEach(track => track.stop());
     mediaStream = null;
   }
   
-  if (activeOscillator) {
-    try { activeOscillator.stop(); } catch(e) {}
-    activeOscillator = null;
-    activeGain = null;
-  }
-  
+  stopPlayingNote();
   isRunning = false;
   currentMidiNote = null;
+  lastStablePitch = 0;
   
   document.getElementById('startBtn').disabled = false;
   document.getElementById('stopBtn').disabled = true;
+  document.getElementById('requestMicBtn').disabled = false;
   document.getElementById('note').innerHTML = '—';
-  document.getElementById('freq').innerHTML = '0';
+  document.getElementById('rawFreq').innerHTML = '0';
+  document.getElementById('quantizedFreq').innerHTML = '0';
+  document.getElementById('diff').innerHTML = '0';
   document.getElementById('clarity').innerHTML = '0';
   document.getElementById('volume').innerHTML = '0';
   
   log('Остановлено. Можно выбрать другой микрофон.');
 }
 
-function playNote(midiNote, velocity) {
-  if (!audioContext) return;
-  
-  const frequency = NOTE_FREQS[midiNote];
-  const gainValue = Math.min(1, Math.max(0.05, velocity / 127));
-  
-  if (activeOscillator && currentMidiNote !== null) {
-    try {
-      activeOscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
-      if (activeGain) activeGain.gain.setValueAtTime(gainValue, audioContext.currentTime);
-    } catch(e) {}
-  } else {
-    if (activeOscillator) {
-      try { activeOscillator.stop(); } catch(e) {}
-    }
-    
-    activeOscillator = audioContext.createOscillator();
-    activeGain = audioContext.createGain();
-    activeOscillator.type = 'sine';
-    activeOscillator.frequency.value = frequency;
-    
-    activeGain.gain.setValueAtTime(0, audioContext.currentTime);
-    activeGain.gain.setValueAtTime(gainValue, audioContext.currentTime + 0.005);
-    
-    activeOscillator.connect(activeGain);
-    activeGain.connect(audioContext.destination);
-    activeOscillator.start();
-  }
-  
-  currentMidiNote = midiNote;
-}
-
-function stopNote() {
-  if (activeOscillator) {
-    try {
-      if (activeGain) {
-        activeGain.gain.setValueAtTime(0, audioContext.currentTime);
-        activeOscillator.stop(audioContext.currentTime + 0.05);
-      } else {
-        activeOscillator.stop();
-      }
-    } catch(e) {}
-    activeOscillator = null;
-    activeGain = null;
-  }
-  currentMidiNote = null;
-}
-
-function quantizePitchFast(pitch) {
-  if (pitch <= 0) return null;
-  
-  let approxMidi = Math.round(12 * Math.log2(pitch / 440) + 69);
-  let startMidi = Math.max(21, approxMidi - 2);
-  let endMidi = Math.min(108, approxMidi + 2);
-  
-  let bestMidi = approxMidi;
-  let bestDiff = Math.abs(pitch - NOTE_FREQS[approxMidi]);
-  
-  for (let midi = startMidi; midi <= endMidi; midi++) {
-    const diff = Math.abs(pitch - NOTE_FREQS[midi]);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestMidi = midi;
-    }
-  }
-  
-  return { midi: bestMidi, freq: NOTE_FREQS[bestMidi], diff: bestDiff };
-}
-
+// Главный цикл распознавания
 function startDetection() {
   const buffer = new Float32Array(analyser.fftSize);
   const volumeBuffer = new Uint8Array(volumeAnalyser.frequencyBinCount);
   
   function detect() {
-    const startTime = performance.now();
-    
     if (!isRunning || !detector) {
       animationId = requestAnimationFrame(detect);
       return;
@@ -321,38 +368,74 @@ function startDetection() {
     const inputVolumePercent = Math.round((avgVolume / 255) * 100);
     document.getElementById('volume').innerHTML = inputVolumePercent;
     
-    let hasSound = (inputVolumePercent >= 3);
+    const minVolume = 5;
+    let shouldPlay = (inputVolumePercent >= minVolume);
     let pitch = 0, clarity = 0;
     
-    if (hasSound) {
+    if (shouldPlay) {
       analyser.getFloatTimeDomainData(buffer);
       [pitch, clarity] = detector.findPitch(buffer);
-      hasSound = (clarity > 0.4 && pitch > 80 && pitch < 2000);
+      shouldPlay = (clarity > 0.4 && pitch > 80 && pitch < 2000);
     }
     
     document.getElementById('clarity').innerHTML = Math.round(clarity * 100);
-    document.getElementById('freq').innerHTML = Math.round(pitch);
+    document.getElementById('rawFreq').innerHTML = Math.round(pitch);
     
-    if (hasSound && pitch > 0) {
-      const quantized = quantizePitchFast(pitch);
-      
+    const useWeighted = quantWeighted.checked;
+    const holdEnabled = holdModeToggle.checked;
+    const holdTol = parseInt(holdTolerance.value);
+    
+    let finalMidi = null;
+    let finalFreq = 0;
+    let diff = 0;
+    
+    if (shouldPlay && pitch > 0) {
+      const quantized = quantizePitch(pitch, useWeighted ? 'weighted' : 'nearest');
       if (quantized) {
-        const noteName = midiToNoteName(quantized.midi);
+        finalMidi = quantized.midi;
+        finalFreq = quantized.freq;
+        diff = quantized.diff;
+        
+        // HOLD режим
+        if (holdEnabled && lastStablePitch > 0 && Math.abs(pitch - lastStablePitch) < holdTol) {
+          const oldQuantized = quantizePitch(lastStablePitch, useWeighted ? 'weighted' : 'nearest');
+          if (oldQuantized) {
+            finalMidi = oldQuantized.midi;
+            finalFreq = oldQuantized.freq;
+          }
+        } else {
+          lastStablePitch = pitch;
+        }
+        
+        document.getElementById('quantizedFreq').innerHTML = Math.round(finalFreq);
+        document.getElementById('diff').innerHTML = Math.round(diff);
+        
+        const noteName = midiToNoteName(finalMidi);
         document.getElementById('note').innerHTML = noteName;
         
-        const velocity = parseInt(document.getElementById('manualMidiVelocity').value);
+        const useInputVolume = useInputVolumeToggle.checked;
+        let outputVelocity = useInputVolume 
+          ? Math.min(127, Math.max(1, inputVolumePercent * 1.5))
+          : parseInt(manualMidiVelocity.value);
         
-        if (currentMidiNote !== quantized.midi) {
-          playNote(quantized.midi, velocity);
+        if (noteOffTimeout) clearTimeout(noteOffTimeout);
+        
+        if (currentMidiNote !== finalMidi) {
+          updatePlayingNote(finalMidi, outputVelocity);
+          currentMidiNote = finalMidi;
         }
       }
     } else if (currentMidiNote !== null) {
-      stopNote();
-      document.getElementById('note').innerHTML = '—';
+      if (noteOffTimeout) clearTimeout(noteOffTimeout);
+      noteOffTimeout = setTimeout(() => {
+        if (currentMidiNote !== null) {
+          stopPlayingNote();
+          currentMidiNote = null;
+          lastStablePitch = 0;
+          document.getElementById('note').innerHTML = '—';
+        }
+      }, parseInt(noteOffDelaySlider.value));
     }
-    
-    const latency = Math.round(performance.now() - startTime);
-    document.getElementById('latency').innerHTML = latency;
     
     animationId = requestAnimationFrame(detect);
   }
@@ -366,15 +449,11 @@ function midiToNoteName(midi) {
   return `${notes[midi % 12]}${octave}`;
 }
 
-// UI
+// Кнопки
 document.getElementById('requestMicBtn').onclick = requestMicrophoneAccess;
 document.getElementById('startBtn').onclick = startProcessing;
 document.getElementById('stopBtn').onclick = stopProcessing;
-document.getElementById('manualMidiVelocity').oninput = () => {
-  document.getElementById('manualMidiVelocityVal').innerText = document.getElementById('manualMidiVelocity').value;
-};
 
-// При загрузке страницы пробуем получить список (может сработать если разрешение уже есть)
 window.addEventListener('load', () => {
   log('Нажмите "Запросить доступ к микрофону"');
 });
